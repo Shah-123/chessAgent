@@ -47,6 +47,7 @@ class ChessAI:
         
         best_move = legal_moves[0]
         best_score = float('-inf') if board.turn == chess.WHITE else float('inf')
+        prev_score = None
         
         # Iterative deepening: search progressively deeper
         for current_depth in range(1, max_depth + 1):
@@ -54,12 +55,13 @@ class ChessAI:
                 break
             
             depth_best_move, depth_best_score = self._search_depth(
-                board, current_depth, start_time, max_time
+                board, current_depth, start_time, max_time, prev_score
             )
             
             if depth_best_move:
                 best_move = depth_best_move
                 best_score = depth_best_score
+                prev_score = depth_best_score  # Use for next iteration's aspiration window
                 print(f"Depth {current_depth}: {best_move} (score: {best_score/100:.2f})")
             
             # Stop if we found a winning move
@@ -73,7 +75,7 @@ class ChessAI:
         
         return best_move
     
-    def _search_depth(self, board, depth, start_time, max_time):
+    def _search_depth(self, board, depth, start_time, max_time, prev_score=None):
         """
         Search to a specific depth with aspiration windows
         
@@ -82,13 +84,59 @@ class ChessAI:
             depth: Search depth
             start_time: Start time for time management
             max_time: Maximum allowed time
+            prev_score: Previous iteration's score for aspiration window
+            
+        Returns:
+            tuple: (best_move, best_score)
+        """
+        # Use aspiration windows if we have a previous score
+        if prev_score is not None and depth > 2:
+            aspiration_window = 50  # Half a pawn
+            alpha = prev_score - aspiration_window
+            beta = prev_score + aspiration_window
+            
+            # Try narrow window first
+            best_move, best_score = self._search_with_window(
+                board, depth, alpha, beta, start_time, max_time
+            )
+            
+            # If we failed low, re-search with full lower bound
+            if best_score <= alpha:
+                alpha = float('-inf')
+                best_move, best_score = self._search_with_window(
+                    board, depth, alpha, beta, start_time, max_time
+                )
+            
+            # If we failed high, re-search with full upper bound
+            if best_score >= beta:
+                beta = float('inf')
+                best_move, best_score = self._search_with_window(
+                    board, depth, alpha, beta, start_time, max_time
+                )
+            
+            return best_move, best_score
+        else:
+            # Full window for first iterations
+            return self._search_with_window(
+                board, depth, float('-inf'), float('inf'), start_time, max_time
+            )
+    
+    def _search_with_window(self, board, depth, alpha, beta, start_time, max_time):
+        """
+        Search with a specific alpha-beta window
+        
+        Args:
+            board: chess.Board object
+            depth: Search depth
+            alpha: Lower bound
+            beta: Upper bound
+            start_time: Start time for time management
+            max_time: Maximum allowed time
             
         Returns:
             tuple: (best_move, best_score)
         """
         best_move = None
-        alpha = float('-inf')
-        beta = float('inf')
         
         legal_moves = list(board.legal_moves)
         legal_moves = self.order_moves(board, legal_moves, 0)
@@ -96,16 +144,43 @@ class ChessAI:
         is_maximizing = board.turn == chess.WHITE
         best_score = float('-inf') if is_maximizing else float('inf')
         
-        for move in legal_moves:
+        for i, move in enumerate(legal_moves):
             if time.time() - start_time > max_time:
                 break
             
             board.push(move)
             
-            score = self.alpha_beta(
-                board, depth - 1, alpha, beta, 
-                not is_maximizing, 1, start_time, max_time
-            )
+            # Principal Variation Search: full window for first move, null window for rest
+            if i == 0:
+                # Search first move with full window
+                score = self.alpha_beta(
+                    board, depth - 1, alpha, beta, 
+                    not is_maximizing, 1, start_time, max_time
+                )
+            else:
+                # Search with null window (zero-width window)
+                if is_maximizing:
+                    score = self.alpha_beta(
+                        board, depth - 1, alpha, alpha + 1,
+                        not is_maximizing, 1, start_time, max_time
+                    )
+                    # If it beats the null window (score > alpha), re-search with full window
+                    if score > alpha and score < beta:
+                        score = self.alpha_beta(
+                            board, depth - 1, score, beta,
+                            not is_maximizing, 1, start_time, max_time
+                        )
+                else:
+                    score = self.alpha_beta(
+                        board, depth - 1, beta - 1, beta,
+                        not is_maximizing, 1, start_time, max_time
+                    )
+                    # If it beats the null window (score < beta), re-search with full window
+                    if score < beta and score > alpha:
+                        score = self.alpha_beta(
+                            board, depth - 1, alpha, score,
+                            not is_maximizing, 1, start_time, max_time
+                        )
             
             board.pop()
             
