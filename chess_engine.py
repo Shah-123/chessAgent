@@ -1,24 +1,27 @@
 import chess
 from evaluation import PositionEvaluator
+from opening_book import OpeningBook
 import time
 
 class ChessAI:
     """
     Advanced Chess AI engine using minimax with alpha-beta pruning, iterative deepening,
-    quiescence search, and move ordering heuristics
+    quiescence search, move ordering heuristics, and opening book
     """
     
     def __init__(self):
         self.evaluator = PositionEvaluator()
+        self.opening_book = OpeningBook()
         self.transposition_table = {}
         self.killer_moves = [[None, None] for _ in range(100)]
         self.history_heuristic = {}
         self.nodes_searched = 0
         self.max_tt_size = 1000000
+        print(f"Opening book loaded with {self.opening_book.get_book_size()} positions")
     
     def get_best_move(self, board, max_depth=3, max_time=30.0):
         """
-        Get the best move using iterative deepening
+        Get the best move using opening book or iterative deepening search
         
         Args:
             board: chess.Board object
@@ -28,6 +31,12 @@ class ChessAI:
         Returns:
             chess.Move: The best move found
         """
+        # Check opening book first
+        book_move = self.opening_book.get_book_move(board)
+        if book_move:
+            print(f"Opening book move: {book_move}")
+            return book_move
+        
         self.nodes_searched = 0
         start_time = time.time()
         
