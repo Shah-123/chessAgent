@@ -153,6 +153,13 @@ class PositionEvaluator:
         # Center control
         score += self._evaluate_center_control(board)
         
+        # Advanced tactical patterns
+        score += self._evaluate_bishop_pair(board)
+        score += self._evaluate_rook_activity(board)
+        score += self._evaluate_knight_outposts(board)
+        score += self._evaluate_piece_coordination(board)
+        score += self._evaluate_threats(board)
+        
         return score
     
     def _evaluate_material(self, board):
@@ -381,3 +388,267 @@ class PositionEvaluator:
                 passed += 1
         
         return passed
+    
+    def _evaluate_bishop_pair(self, board):
+        """Evaluate bishop pair bonus"""
+        score = 0
+        
+        white_bishops = board.pieces(chess.BISHOP, chess.WHITE)
+        black_bishops = board.pieces(chess.BISHOP, chess.BLACK)
+        
+        # Bishop pair bonus (having both light and dark squared bishops)
+        if len(white_bishops) >= 2:
+            score += 50
+        if len(black_bishops) >= 2:
+            score -= 50
+        
+        return score
+    
+    def _evaluate_rook_activity(self, board):
+        """Evaluate rook activity on open and semi-open files"""
+        score = 0
+        
+        # Check each file for pawn presence
+        for color in [chess.WHITE, chess.BLACK]:
+            rooks = board.pieces(chess.ROOK, color)
+            
+            for rook_square in rooks:
+                rook_file = chess.square_file(rook_square)
+                
+                # Check if file is open or semi-open
+                has_own_pawn = False
+                has_enemy_pawn = False
+                
+                for rank in range(8):
+                    square = chess.square(rook_file, rank)
+                    piece = board.piece_at(square)
+                    if piece and piece.piece_type == chess.PAWN:
+                        if piece.color == color:
+                            has_own_pawn = True
+                        else:
+                            has_enemy_pawn = True
+                
+                # Open file (no pawns)
+                if not has_own_pawn and not has_enemy_pawn:
+                    bonus = 25
+                # Semi-open file (no own pawns)
+                elif not has_own_pawn:
+                    bonus = 15
+                # Rook on 7th rank
+                elif chess.square_rank(rook_square) == 6 and color == chess.WHITE:
+                    bonus = 20
+                elif chess.square_rank(rook_square) == 1 and color == chess.BLACK:
+                    bonus = 20
+                else:
+                    bonus = 0
+                
+                if color == chess.WHITE:
+                    score += bonus
+                else:
+                    score -= bonus
+        
+        return score
+    
+    def _evaluate_knight_outposts(self, board):
+        """Evaluate knight outposts (strong squares protected by pawns and not attackable by enemy pawns)"""
+        score = 0
+        
+        outpost_squares_white = [chess.C4, chess.C5, chess.C6, chess.D4, chess.D5, chess.D6,
+                                  chess.E4, chess.E5, chess.E6, chess.F4, chess.F5, chess.F6]
+        outpost_squares_black = [chess.C3, chess.C4, chess.C5, chess.D3, chess.D4, chess.D5,
+                                  chess.E3, chess.E4, chess.E5, chess.F3, chess.F4, chess.F5]
+        
+        # Check white knights
+        white_knights = board.pieces(chess.KNIGHT, chess.WHITE)
+        black_pawns = board.pieces(chess.PAWN, chess.BLACK)
+        
+        for knight_square in white_knights:
+            if knight_square in outpost_squares_white:
+                knight_file = chess.square_file(knight_square)
+                knight_rank = chess.square_rank(knight_square)
+                
+                # Check if protected by own pawn
+                protected = False
+                for file_offset in [-1, 1]:
+                    pawn_file = knight_file + file_offset
+                    if 0 <= pawn_file <= 7 and knight_rank > 0:
+                        pawn_square = chess.square(pawn_file, knight_rank - 1)
+                        piece = board.piece_at(pawn_square)
+                        if piece and piece.piece_type == chess.PAWN and piece.color == chess.WHITE:
+                            protected = True
+                            break
+                
+                # Check if enemy pawns can attack this square (currently or after advances)
+                # Black pawns attack from one rank forward (higher rank number)
+                can_be_attacked = False
+                for black_pawn_square in black_pawns:
+                    pawn_file = chess.square_file(black_pawn_square)
+                    pawn_rank = chess.square_rank(black_pawn_square)
+                    
+                    if abs(pawn_file - knight_file) == 1:
+                        # Black pawn attacks diagonally downward (from higher rank to lower)
+                        # Currently attacking: pawn on rank R attacks rank R-1
+                        if pawn_rank - 1 == knight_rank:
+                            can_be_attacked = True
+                            break
+                        # Can advance one square and attack
+                        elif pawn_rank - 2 == knight_rank:
+                            advance_square = chess.square(pawn_file, pawn_rank - 1)
+                            if not board.piece_at(advance_square):
+                                can_be_attacked = True
+                                break
+                        # Can double-advance from starting rank (rank 6) and attack
+                        elif pawn_rank == 6 and pawn_rank - 3 == knight_rank:
+                            square_1 = chess.square(pawn_file, pawn_rank - 1)
+                            square_2 = chess.square(pawn_file, pawn_rank - 2)
+                            if not board.piece_at(square_1) and not board.piece_at(square_2):
+                                can_be_attacked = True
+                                break
+                
+                if protected and not can_be_attacked:
+                    score += 30
+        
+        # Check black knights
+        black_knights = board.pieces(chess.KNIGHT, chess.BLACK)
+        white_pawns = board.pieces(chess.PAWN, chess.WHITE)
+        
+        for knight_square in black_knights:
+            if knight_square in outpost_squares_black:
+                knight_file = chess.square_file(knight_square)
+                knight_rank = chess.square_rank(knight_square)
+                
+                # Check if protected by own pawn
+                protected = False
+                for file_offset in [-1, 1]:
+                    pawn_file = knight_file + file_offset
+                    if 0 <= pawn_file <= 7 and knight_rank < 7:
+                        pawn_square = chess.square(pawn_file, knight_rank + 1)
+                        piece = board.piece_at(pawn_square)
+                        if piece and piece.piece_type == chess.PAWN and piece.color == chess.BLACK:
+                            protected = True
+                            break
+                
+                # Check if enemy pawns can attack this square (currently or after advances)
+                # White pawns attack from one rank backward (lower rank number)
+                can_be_attacked = False
+                for white_pawn_square in white_pawns:
+                    pawn_file = chess.square_file(white_pawn_square)
+                    pawn_rank = chess.square_rank(white_pawn_square)
+                    
+                    if abs(pawn_file - knight_file) == 1:
+                        # White pawn attacks diagonally upward (from lower rank to higher)
+                        # Currently attacking: pawn on rank R attacks rank R+1
+                        if pawn_rank + 1 == knight_rank:
+                            can_be_attacked = True
+                            break
+                        # Can advance one square and attack
+                        elif pawn_rank + 2 == knight_rank:
+                            advance_square = chess.square(pawn_file, pawn_rank + 1)
+                            if not board.piece_at(advance_square):
+                                can_be_attacked = True
+                                break
+                        # Can double-advance from starting rank (rank 1) and attack
+                        elif pawn_rank == 1 and pawn_rank + 3 == knight_rank:
+                            square_1 = chess.square(pawn_file, pawn_rank + 1)
+                            square_2 = chess.square(pawn_file, pawn_rank + 2)
+                            if not board.piece_at(square_1) and not board.piece_at(square_2):
+                                can_be_attacked = True
+                                break
+                
+                if protected and not can_be_attacked:
+                    score -= 30
+        
+        return score
+    
+    def _evaluate_piece_coordination(self, board):
+        """Evaluate piece coordination patterns"""
+        score = 0
+        
+        # Rooks on the same rank or file (battery) with clear line
+        for color in [chess.WHITE, chess.BLACK]:
+            rooks = list(board.pieces(chess.ROOK, color))
+            if len(rooks) == 2:
+                r1_file = chess.square_file(rooks[0])
+                r1_rank = chess.square_rank(rooks[0])
+                r2_file = chess.square_file(rooks[1])
+                r2_rank = chess.square_rank(rooks[1])
+                
+                # Check if same file or rank with clear line
+                clear_line = False
+                if r1_file == r2_file:
+                    # Check vertical line
+                    min_rank = min(r1_rank, r2_rank)
+                    max_rank = max(r1_rank, r2_rank)
+                    clear_line = True
+                    for rank in range(min_rank + 1, max_rank):
+                        square = chess.square(r1_file, rank)
+                        if board.piece_at(square):
+                            clear_line = False
+                            break
+                elif r1_rank == r2_rank:
+                    # Check horizontal line
+                    min_file = min(r1_file, r2_file)
+                    max_file = max(r1_file, r2_file)
+                    clear_line = True
+                    for file in range(min_file + 1, max_file):
+                        square = chess.square(file, r1_rank)
+                        if board.piece_at(square):
+                            clear_line = False
+                            break
+                
+                if clear_line:
+                    bonus = 15
+                    if color == chess.WHITE:
+                        score += bonus
+                    else:
+                        score -= bonus
+        
+        # Bishops on long diagonals
+        for color in [chess.WHITE, chess.BLACK]:
+            bishops = board.pieces(chess.BISHOP, color)
+            for bishop_square in bishops:
+                file = chess.square_file(bishop_square)
+                rank = chess.square_rank(bishop_square)
+                
+                # Check if on long diagonal (a1-h8 or a8-h1)
+                if file == rank or file + rank == 7:
+                    bonus = 10
+                    if color == chess.WHITE:
+                        score += bonus
+                    else:
+                        score -= bonus
+        
+        return score
+    
+    def _evaluate_threats(self, board):
+        """Evaluate threats and hanging pieces"""
+        score = 0
+        
+        # Check for attacked pieces
+        for square in chess.SQUARES:
+            piece = board.piece_at(square)
+            if piece:
+                # Count attackers and defenders
+                attackers = board.attackers(not piece.color, square)
+                defenders = board.attackers(piece.color, square)
+                
+                num_attackers = len(list(attackers))
+                num_defenders = len(list(defenders))
+                
+                # Piece is hanging (attacked and not defended)
+                if num_attackers > 0 and num_defenders == 0:
+                    penalty = self.piece_values.get(piece.piece_type, 0) // 2
+                    if piece.color == chess.WHITE:
+                        score -= penalty
+                    else:
+                        score += penalty
+                
+                # Piece is under attack (more attackers than defenders)
+                elif num_attackers > num_defenders:
+                    penalty = self.piece_values.get(piece.piece_type, 0) // 4
+                    if piece.color == chess.WHITE:
+                        score -= penalty
+                    else:
+                        score += penalty
+        
+        return score
